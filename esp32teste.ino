@@ -1,19 +1,17 @@
 #include <WiFi.h>
-#include <HTTPClient.h>
 #include <PubSubClient.h>
-#include <Adafruit_Sensor.h>
 #include <DHT.h>
-#include <DHT_U.h>
-#include <ArduinoJson.h>
-#include "esp_system.h"
+#include <ArduinoJson.h>  // Inclua a biblioteca ArduinoJson
 
-#define DHTPIN 32         // Pino onde o sensor DHT está conectado
-#define DHTTYPE DHT22     // Definindo o tipo de DHT (DHT22)
-#define LDRPIN 33         // Pino onde o sensor LDR está conectado (pino analógico)
-#define LEDPIN 2          // Pino onde o LED está conectado
+#define DHTPIN 32
+#define DHTTYPE DHT22
+#define LDRPIN 33
+#define LEDPIN 2
 
-const char* mqtt_server = "test.mosquitto.org"; // Endereço do servidor MQTT
-const char* api_server = "https://esp32-data-api-1.onrender.com";
+const char* mqtt_server = "test.mosquitto.org";
+
+// Dados das credenciais Wi-Fi no formato JSON
+const char* wifi_credentials_str = "[{\"CLARO_2G287EF5\":\"AF287EF5\"},{\"CLARO_5G287EF5\":\"AF287EF5\"},{\"Getulio\":\"100200300\"}]";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -29,89 +27,129 @@ struct WiFiCredentials {
   String password;
 };
 
-WiFiCredentials wifi_credentials[10]; // Array para armazenar até 10 credenciais de Wi-Fi
+WiFiCredentials wifi_credentials[10];
 int credentials_count = 0;
 
 void setup_wifi() {
-  HTTPClient http;
-  String url = String(api_server) + "/connections"; // Concatenação de strings correta
-  http.begin(url);
+  DynamicJsonDocument doc(2048);
 
-  int httpCode = http.GET();
-  if (httpCode > 0) {
-    String payload = http.getString();
-    Serial.println(payload);
+  // Processa o JSON
+  DeserializationError error = deserializeJson(doc, wifi_credentials_str);
+  if (error) {
+    Serial.print("Falha ao processar JSON: ");
+    Serial.println(error.c_str());
+    return;
+  }
 
-    DynamicJsonDocument doc(1024);
-    deserializeJson(doc, payload);
-
-    credentials_count = doc.size();
-
-    int index = 0;
-    for (JsonObject obj : doc.as<JsonArray>()) {
-      for (JsonPair kv : obj) {
+  int index = 0;
+  for (JsonObject obj : doc.as<JsonArray>()) {
+    for (JsonPair kv : obj) {
+      if (index < 10) {
         wifi_credentials[index].ssid = kv.key().c_str();
         wifi_credentials[index].password = kv.value().as<String>();
         index++;
       }
     }
-
-    http.end();
-  } else {
-    Serial.println("Falha ao obter as credenciais da API");
-    http.end();
-    return;
   }
 
-  for (int i = 0; i < credentials_count; i++) {
-    Serial.print("Conectando ao Wi-Fi ");
-    Serial.println(wifi_credentials[i].ssid);
+  credentials_count = index;
 
-    WiFi.begin(wifi_credentials[i].ssid.c_str(), wifi_credentials[i].password.c_str());
+  bool connected = false;
+  while (!connected) {
+    for (int i = 0; i < credentials_count; i++) {
+      Serial.print("Tentando conectar ao Wi-Fi ");
+      Serial.println(wifi_credentials[i].ssid);
 
-    int retry_count = 0;
-    while (WiFi.status() != WL_CONNECTED && retry_count < 20) {
-      delay(500);
-      Serial.print(".");
-      retry_count++;
+      WiFi.begin(wifi_credentials[i].ssid.c_str(), wifi_credentials[i].password.c_str());
+
+      int retry_count = 0;
+      while (WiFi.status() != WL_CONNECTED && retry_count < 20) {
+        delay(500);
+        Serial.print(".");
+        retry_count++;
+      }
+
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("");
+        Serial.println("WiFi conectado: " + String(wifi_credentials[i].ssid.c_str()));
+        Serial.println("Endereço IP: ");
+        Serial.println(WiFi.localIP());
+        connected = true;
+        break;
+      } else {
+        Serial.println("Falha ao conectar");
+      }
+      // Se for o último índice e ainda não está conectado, reinicie i para 0
+        if (i == credentials_count - 1) {
+            i = -1; // -1 porque o próximo incremento de i será 0
+        }
+
     }
 
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("");
-      Serial.println("WiFi conectado");
-      Serial.println("Endereço IP: ");
-      Serial.println(WiFi.localIP());
-      return;
-    }
+   
   }
-
-  Serial.println("Falha ao conectar a qualquer rede Wi-Fi");
 }
 
 void reconnect() {
-  // Loop até reconectar
   while (!client.connected()) {
     Serial.print("Tentando conexão MQTT...");
-    // Tentando se conectar
     if (client.connect("ESP32Client")) {
       Serial.println("Conectado");
-      // Você pode se inscrever em tópicos aqui se necessário
-      // client.subscribe("sua/assinatura");
-    } else {
-      Serial.print("falhou, rc=");
-      Serial.print(client.state());
-      Serial.println(" tentando novamente em 5 segundos");
-      delay(5000);
-      Serial.println("Restarting now...");
-      esp_restart();  // Reinicia a placa
     }
+    else {
+      setup_wifi();
+    }
+      // Inscrever-se em tópicos se necessário
+      // client.subscribe("sua/assinatura");
+    // } else {
+    //   Serial.print("Falhou, rc=");
+    //   Serial.print(client.state());
+    //   Serial.println(" Tentando novamente em 5 segundos");
+    //   delay(5000);
+    // }
   }
+}
+
+String generateJson(float temperatura, float umidade, int luz) {
+    String json = "{";
+
+    json += "\"temperatura\":";
+    if (isnan(temperatura)) {
+        json += "null";
+    } else {
+        json += String(temperatura);
+    }
+
+    json += ", \"umidade\":";
+    if (isnan(umidade)) {
+        json += "null";
+    } else {
+        json += String(umidade);
+    }
+
+    json += ", \"luz\":";
+    json += String(luz);
+
+    json += "}";
+    
+    return json;
 }
 
 void setup() {
   Serial.begin(115200);
   setup_wifi();
   client.setServer(mqtt_server, 1883);
+
+  // Exemplo de uso:
+    float temperatura = NAN;
+    float umidade = NAN;
+    int luz = 1714;
+
+    String message = generateJson(temperatura, umidade, luz);
+    Serial.println(message);
+
+    // Enviar a mensagem via MQTT
+    client.publish("esp32/sensores", message.c_str());
 
   pinMode(LDRPIN, INPUT);
   pinMode(LEDPIN, OUTPUT);
@@ -125,7 +163,7 @@ void blinkLED(int times) {
     digitalWrite(LEDPIN, LOW);
     delay(500);
   }
-  delay(3000); // Espera 3 segundos com o LED apagado
+  delay(3000);
 }
 
 void loop() {
@@ -145,16 +183,19 @@ void loop() {
   if (isnan(humidity)) {
     Serial.println("Falha ao ler do sensor DHT!: Umidade!");
     humidityError = true;
+    // humidity = 0;
   }
 
   if (isnan(temperature)) {
     Serial.println("Falha ao ler do sensor DHT!: Temperatura!");
     tempError = true;
+    // temperature = 0;
   }
 
   if (isnan(lightLevel)) {
     Serial.println("Falha ao ler do sensor de Iluminação!");
     lightError = true;
+    // lightLevel = 0;
   }
 
   Serial.print("Umidade: ");
@@ -164,15 +205,23 @@ void loop() {
   Serial.print("°C  Luminosidade: ");
   Serial.println(lightLevel);
 
-  // Cria uma string JSON para enviar
   String payload = "{\"temperatura\":" + String(temperature) 
                  + ", \"umidade\":" + String(humidity) 
                  + ", \"luz\":" + String(lightLevel) + "}";
 
-  // Publica a mensagem no tópico "esp32/sensores"
-  client.publish("esp32/sensores", payload.c_str());
+                 // Exemplo de uso:
+  // float temperatura = NAN;
+  // float umidade = NAN;
+  // int luz = 1714;
 
-  // Controle do LED
+  String message = generateJson(temperature, humidity, lightLevel);
+  // Serial.println(message);
+
+  // Enviar a mensagem via MQTT
+  client.publish("esp32/sensores", message.c_str());
+
+  // client.publish("esp32/sensores", payload.c_str());
+
   int blinkCount = 0;
 
   if (tempError) {
@@ -188,9 +237,9 @@ void loop() {
   }
 
   if (blinkCount > 0) {
-    blinkLED(blinkCount);  // LED piscando
+    blinkLED(blinkCount);
   } else {
-    digitalWrite(LEDPIN, HIGH);  // LED estático
-    delay(10000); // Espera 10 segundos antes de enviar os dados novamente
+    digitalWrite(LEDPIN, HIGH);
+    delay(10000);
   }
 }
