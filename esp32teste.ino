@@ -8,6 +8,7 @@
 #define DHTPIN 32         // Pino onde o sensor DHT está conectado
 #define DHTTYPE DHT22     // Definindo o tipo de DHT (DHT22)
 #define LDRPIN 33         // Pino onde o sensor LDR está conectado (pino analógico)
+#define LEDPIN 2          // Pino onde o LED está conectado
 
 const char* ssid = "CLARO_2G287EF5";          // Coloque o nome da sua rede Wi-Fi
 const char* password = "AF287EF5";            // Coloque a senha da sua rede Wi-Fi
@@ -17,6 +18,10 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 
 DHT dht(DHTPIN, DHTTYPE);
+
+bool tempError = false;
+bool humidityError = false;
+bool lightError = false;
 
 void setup_wifi() {
   delay(10);
@@ -63,7 +68,18 @@ void setup() {
   client.setServer(mqtt_server, 1883);
 
   pinMode(LDRPIN, INPUT);
+  pinMode(LEDPIN, OUTPUT);
   dht.begin();
+}
+
+void blinkLED(int times) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(LEDPIN, HIGH);
+    delay(500);
+    digitalWrite(LEDPIN, LOW);
+    delay(500);
+  }
+  delay(3000); // Espera 3 segundos com o LED apagado
 }
 
 void loop() {
@@ -76,9 +92,23 @@ void loop() {
   float temperature = dht.readTemperature();
   int lightLevel = analogRead(LDRPIN);
 
-  if (isnan(humidity) || isnan(temperature)) {
-    Serial.println("Falha ao ler do sensor DHT!");
-    return;
+  tempError = false;
+  humidityError = false;
+  lightError = false;
+
+  if (isnan(humidity)) {
+    Serial.println("Falha ao ler do sensor DHT!: Umidade!");
+    humidityError = true;
+  }
+
+  if (isnan(temperature)) {
+    Serial.println("Falha ao ler do sensor DHT!: Temperatura!");
+    tempError = true;
+  }
+
+  if (isnan(lightLevel)) {
+    Serial.println("Falha ao ler do sensor de Iluminação!");
+    lightError = true;
   }
 
   Serial.print("Umidade: ");
@@ -96,6 +126,25 @@ void loop() {
   // Publica a mensagem no tópico "esp32/sensores"
   client.publish("esp32/sensores", payload.c_str());
 
-  // Espera 10 segundos antes de enviar os dados novamente
-  delay(10000);
+  // Controle do LED
+  int blinkCount = 0;
+
+  if (tempError) {
+    blinkCount += 3;
+  }
+
+  if (humidityError) {
+    blinkCount += 2;
+  }
+
+  if (lightError) {
+    blinkCount += 1;
+  }
+
+  if (blinkCount > 0) {
+    blinkLED(blinkCount);  // LED piscando
+  } else {
+    digitalWrite(LEDPIN, HIGH);  // LED estático
+    delay(10000); // Espera 10 segundos antes de enviar os dados novamente
+  }
 }
