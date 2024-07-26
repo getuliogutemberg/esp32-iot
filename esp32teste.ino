@@ -13,7 +13,7 @@
 #define LEDPIN 2          // Pino onde o LED está conectado
 
 const char* mqtt_server = "test.mosquitto.org"; // Endereço do servidor MQTT
-const char* api_server = "https://esp32-data-api-1.onrender.com"
+const char* api_server = "https://esp32-data-api-1.onrender.com";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -34,7 +34,8 @@ int credentials_count = 0;
 
 void setup_wifi() {
   HTTPClient http;
-  http.begin(api_server + "/connections");
+  String url = String(api_server) + "/connections"; // Concatenação de strings correta
+  http.begin(url);
 
   int httpCode = http.GET();
   if (httpCode > 0) {
