@@ -1,8 +1,10 @@
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include <PubSubClient.h>
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
+#include <ArduinoJson.h>
 #include "esp_system.h"
 
 #define DHTPIN 32         // Pino onde o sensor DHT está conectado
@@ -10,8 +12,6 @@
 #define LDRPIN 33         // Pino onde o sensor LDR está conectado (pino analógico)
 #define LEDPIN 2          // Pino onde o LED está conectado
 
-const char* ssid = "CLARO_2G287EF5";          // Coloque o nome da sua rede Wi-Fi
-const char* password = "AF287EF5";            // Coloque a senha da sua rede Wi-Fi
 const char* mqtt_server = "test.mosquitto.org"; // Endereço do servidor MQTT
 
 WiFiClient espClient;
@@ -23,23 +23,67 @@ bool tempError = false;
 bool humidityError = false;
 bool lightError = false;
 
+struct WiFiCredentials {
+  String ssid;
+  String password;
+};
+
+WiFiCredentials wifi_credentials[10]; // Array para armazenar até 10 credenciais de Wi-Fi
+int credentials_count = 0;
+
 void setup_wifi() {
-  delay(10);
-  Serial.println();
-  Serial.print("Conectando ao Wi-Fi ");
-  Serial.println(ssid);
+  HTTPClient http;
+  http.begin("https://esp32-data-api-1.onrender.com/token");
 
-  WiFi.begin(ssid, password);
+  int httpCode = http.GET();
+  if (httpCode > 0) {
+    String payload = http.getString();
+    Serial.println(payload);
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, payload);
+
+    credentials_count = doc.size();
+
+    int index = 0;
+    for (JsonObject obj : doc.as<JsonArray>()) {
+      for (JsonPair kv : obj) {
+        wifi_credentials[index].ssid = kv.key().c_str();
+        wifi_credentials[index].password = kv.value().as<String>();
+        index++;
+      }
+    }
+
+    http.end();
+  } else {
+    Serial.println("Falha ao obter as credenciais da API");
+    http.end();
+    return;
   }
 
-  Serial.println("");
-  Serial.println("WiFi conectado");
-  Serial.println("Endereço IP: ");
-  Serial.println(WiFi.localIP());
+  for (int i = 0; i < credentials_count; i++) {
+    Serial.print("Conectando ao Wi-Fi ");
+    Serial.println(wifi_credentials[i].ssid);
+
+    WiFi.begin(wifi_credentials[i].ssid.c_str(), wifi_credentials[i].password.c_str());
+
+    int retry_count = 0;
+    while (WiFi.status() != WL_CONNECTED && retry_count < 20) {
+      delay(500);
+      Serial.print(".");
+      retry_count++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("");
+      Serial.println("WiFi conectado");
+      Serial.println("Endereço IP: ");
+      Serial.println(WiFi.localIP());
+      return;
+    }
+  }
+
+  Serial.println("Falha ao conectar a qualquer rede Wi-Fi");
 }
 
 void reconnect() {
